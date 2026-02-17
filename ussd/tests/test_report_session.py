@@ -1,11 +1,13 @@
-from ussd.tests import UssdTestCase, TestCase
 from unittest import mock
-from django.test import override_settings
-from django.http.response import JsonResponse
-from ussd.core import ussd_session
-from ussd.tasks import report_session
 from uuid import uuid4
+
 from celery.exceptions import MaxRetriesExceededError
+from django.http.response import JsonResponse
+from django.test import override_settings
+
+from ussd.core import ussd_session  # Added load_yaml
+from ussd.tasks import report_session
+from ussd.tests import UssdTestCase, TestCase
 
 
 @override_settings(
@@ -97,7 +99,7 @@ class TestingUssdReportSession(UssdTestCase.BaseUssdTestCase, TestCase):
                             "session_key": "reported",
                             "validate_response": [
                                 {"expression":
-                                    "{{reported.status_code}} == 200"}
+                                     "{{reported.status_code}} == 200"}
                             ],
                             "retry_mechanism": {
                                 "max_retries": 3
@@ -177,9 +179,9 @@ class TestingUssdReportSession(UssdTestCase.BaseUssdTestCase, TestCase):
                     "max_retries": 3
                 },
                 "validate_response": [
-                                {"expression":
-                                    "{{reported.status_code}} == 200"}
-                            ],
+                    {"expression":
+                         "{{reported.status_code}} == 200"}
+                ],
                 "request_conf": {
                     "url": "localhost:8006/api",
                     "method": "post",
@@ -229,9 +231,9 @@ class TestingUssdReportSession(UssdTestCase.BaseUssdTestCase, TestCase):
                     "max_retries": 3
                 },
                 "validate_response": [
-                                {"expression":
-                                    "{{reported.status_code}} == 200"}
-                            ],
+                    {"expression":
+                         "{{reported.status_code}} == 200"}
+                ],
                 "request_conf": {
                     "url": "localhost:8006/api",
                     "method": "post",
@@ -254,21 +256,42 @@ class TestingUssdReportSession(UssdTestCase.BaseUssdTestCase, TestCase):
         self.assertFalse(mock_request.called)
 
     @mock.patch("requests.request")
-    @mock.patch.object(report_session, 'retry')
-    def test_retry(self, mock_retry, mock_request):
-        mock_response = JsonResponse({"balance": 250},
-                                     status=400
-                                     )
+    @mock.patch("ussd.core.report_session.apply_async")
+    def test_retry(self, mock_apply_async, mock_request):
+        mock_response = JsonResponse({"balance": 250}, status=400)
         mock_request.return_value = mock_response
+
+        # Configure the side_effect for mock_apply_async
+        # This function will be called whenever report_session.apply_async is invoked.
+        def mock_apply_async_side_effect(*args, **kwargs):
+            session_id = args[0]
+            screen_content = kwargs['kwargs']['screen_content']  # Extract screen_content from kwargs
+
+            # Create a mock for the 'self' argument of the bound task
+            mock_task_self = mock.MagicMock()
+            mock_task_self.retry = mock.MagicMock()  # Mock the retry method on this mock 'self'
+
+            # Manually call the original report_session task function
+            # Ensure we're calling the *actual* report_session function from ussd.tasks, not a mock.
+            from ussd.tasks import report_session as real_report_session
+            real_report_session(mock_task_self, session_id, screen_content)
+
+            # Store the mock_task_self so we can assert on its retry method later
+            mock_apply_async.mock_task_self_instance = mock_task_self
+
+        mock_apply_async.side_effect = mock_apply_async_side_effect
+
         ussd_client = self.get_ussd_client()
-        ussd_client.send('mwas')
+        ussd_client.send('mwas')  # This triggers report_session.apply_async
+
+        # Now, check the mock_task_self_instance stored in mock_apply_async
+        self.assertTrue(hasattr(mock_apply_async, 'mock_task_self_instance'), "mock_task_self_instance not set")
+        self.assertTrue(mock_apply_async.mock_task_self_instance.retry.called)
 
         # check posted flag has been set to false
         self.assertFalse(
             ussd_session(ussd_client.session_id)['posted'],
         )
-
-        self.assertTrue(mock_retry.called)
 
     @mock.patch("ussd.core.report_session.apply_async")
     def test_report_task_only_called_when_activated(self, mock_report_session):
@@ -279,7 +302,7 @@ class TestingUssdReportSession(UssdTestCase.BaseUssdTestCase, TestCase):
 
         self.assertEqual(
             "Test getting variable from os environmen. variable_test",
-            ussd_client.send('') # dial in
+            ussd_client.send('')  # dial in
         )
 
     @mock.patch("ussd.core.requests.request")
@@ -294,9 +317,6 @@ class TestingUssdReportSession(UssdTestCase.BaseUssdTestCase, TestCase):
         ussd_client = self.get_ussd_client()
         ussd_client.send('mwas')
 
-
     def testing_invalid_customer_journey(self):
         # this is tested in the initial screen
         pass
-
-

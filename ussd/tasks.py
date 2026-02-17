@@ -52,7 +52,9 @@ def report_session(self, session_id, screen_content):
             return
 
     if ussd_report_session_data.get('retry_mechanism'):
+        print(f"DEBUG: report_session - Retry mechanism active. Session ID: {session_id}")
         try:
+            print(f"DEBUG: report_session - Calling self.retry() for session ID: {session_id}")
             self.retry(**screen_content[
                     'ussd_report_session']['retry_mechanism'])
         except MaxRetriesExceededError as e:

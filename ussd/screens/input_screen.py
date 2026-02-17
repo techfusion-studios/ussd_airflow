@@ -1,7 +1,7 @@
 from ussd.core import UssdHandlerAbstract, UssdResponse
 from ussd.screens.serializers import UssdContentBaseSerializer, \
     UssdTextSerializer, NextUssdScreenSerializer, MenuOptionSerializer
-from django.utils.encoding import force_text
+from django.utils.encoding import force_str
 import re
 from rest_framework import serializers
 from ussd.screens.menu_screen import MenuScreen
@@ -70,22 +70,22 @@ class InputScreen(MenuScreen):
     screen_type = "input_screen"
     serializer = InputSerializer
 
-    def handle_invalid_input(self):
-        # validate input
+    def handle_ussd_input(self, ussd_input):
+        # 1. Perform validation
         validation_rules = self.screen_content.get("validators", {})
         for validation_rule in validation_rules:
-
             if 'regex' in validation_rule:
                 regex_expression = validation_rule['regex']
                 regex = re.compile(regex_expression)
                 is_valid = bool(
                     regex.search(
-                        force_text(self.ussd_request.input)
+                        force_str(ussd_input)
                     ))
             else:
                 is_valid = self.evaluate_jija_expression(
                     validation_rule['expression'],
-                    session=self.ussd_request.session
+                    session=self.ussd_request.session,
+                    extra_context={self.screen_content['input_identifier']: ussd_input}
                 )
 
             # show error message if validation failed
@@ -96,11 +96,39 @@ class InputScreen(MenuScreen):
                     )
                 )
 
+        # 2. Save the user input to the session
         self.ussd_request.session[
             self.screen_content['input_identifier']
-        ] = self.ussd_request.input
+        ] = ussd_input
 
-        return self.route_options()
+        # 3. Check if input matches any explicit options for routing (like a menu screen)
+        resolved_next_screen_conf = None
+
+        # Check for numeric options first (if input is a digit)
+        if ussd_input.isdigit():
+            ussd_input_int = int(ussd_input)
+            # self.menu_options is populated in MenuScreen's __init__
+            for index, menu_option_obj in enumerate(self.menu_options, 1):
+                if index == ussd_input_int:
+                    resolved_next_screen_conf = menu_option_obj.next_screen
+                    break
+        
+        # If not routed by numeric option, check for text-based options (input_value)
+        # and only if resolved_next_screen_conf is still None
+        if not resolved_next_screen_conf:
+            for menu_option_obj in self.menu_options:
+                if menu_option_obj.index_value == ussd_input: # index_value can be custom text from 'input_value'
+                    resolved_next_screen_conf = menu_option_obj.next_screen
+                    break
+
+        # 4. Route based on matched option or fallback to screen's primary next_screen
+        if resolved_next_screen_conf:
+            # resolved_next_screen_conf will be a list of dicts (from NextUssdScreenSerializer)
+            # route_options is designed to handle this list.
+            return self.route_options(resolved_next_screen_conf)
+        else:
+            # If no option matched, fall back to the screen's primary next_screen logic
+            return self.route_options(self.screen_content.get("next_screen"))
 
     def get_next_screens(self) -> typing.List[Link]:
         # generate validators links

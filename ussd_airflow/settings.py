@@ -45,17 +45,18 @@ INSTALLED_APPS = [
     # *********************************#
 ]
 
-MIDDLEWARE_CLASSES = [
+MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.auth.middleware.SessionAuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 ROOT_URLCONF = 'ussd_airflow.urls'
 
@@ -127,7 +128,7 @@ STATIC_ROOT = os.path.abspath(os.path.join(BASE_DIR, 'static'))
 
 # todo remove this serializer, then investigate a way of saving ordered dict
 # in session
-SESSION_SERIALIZER = 'django.contrib.sessions.serializers.PickleSerializer'
+SESSION_SERIALIZER = 'django.contrib.sessions.serializers.JSONSerializer'
 
 DEFAULT_USSD_SCREEN_JOURNEY = "./ussd/tests/sample_screen_definition/sample_customer_journey.yml"
 

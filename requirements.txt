@@ -1,17 +1,18 @@
 -r default.txt
-gunicorn==19.6.0
-psycopg2==2.6.2
-sphinx==1.5.1
-sphinx-autobuild==0.6.0
-sphinx_rtd_theme==0.1.9
-coverage==4.1
-codacy-coverage==1.2.18
-dj-database-url==0.4.1
+gunicorn
+psycopg2-binary
+sphinx
+sphinx-autobuild
+sphinx_rtd_theme
+coverage
+codacy-coverage
+dj-database-url
 freezegun
-setuptools>=27
-django-cors-headers==2.4.0
-boto3==1.9.87
-awscli==1.16.15
-# using mwaaas branch here as we wait for this pull request to be merged
-# https://github.com/steven-bruce-au/dynamodb-local-cloud-formation/pull/4
-git+https://github.com/mwaaas/dynamodb-local-cloud-formation.git@4bc92a0430ec319dc3ce33e9fffadd6ba1c861a8
+setuptools
+django-cors-headers
+boto3
+
+# TODO: The git dependency below was commented out because it was causing issues.
+# Need to investigate and find a suitable replacement or update.
+# git+https://github.com/mwaaas/dynamodb-local-cloud-formation.git@4bc92a0430ec319dc3ce33e9fffadd6ba1c861a8
+

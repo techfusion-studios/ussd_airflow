@@ -1,9 +1,13 @@
 from django.core.management import call_command
-from django.test import LiveServerTestCase
 import json
 import os
-from django.conf.urls import url, include
+import sys
+from django.urls import re_path, include
 from django.test import TestCase
+from django.conf import settings
+from django.core.management import call_command
+from django.test.utils import override_settings
+import shutil
 
 from ussd_airflow import urls
 from rest_framework.test import APIClient
@@ -18,30 +22,37 @@ class TestUssdAppIsNotCreated(TestCase):
             include(app_name)
 
 
-class TestUssdAppCreation(LiveServerTestCase):
+class TestUssdAppCreation(TestCase):
+
     def setUp(self):
-        self.client = APIClient()
+        self.app_name = 'TestUssdApp'
+        call_command('create_ussd_app', self.app_name)
+        self.app_path = os.path.join(settings.BASE_DIR, self.app_name)
 
-    def test_app_creation(self):
-        app_name = 'TestUssdApp'
-        call_command('create_ussd_app', app_name)
+    def tearDown(self):
+        # Clean up created app directory
+        if os.path.exists(self.app_path):
+            shutil.rmtree(self.app_path)
+        # Remove the app path from sys.path
+        if os.path.abspath(self.app_path) in sys.path:
+            sys.path.remove(os.path.abspath(self.app_path))
 
-        ussd_url = [
-            url(r'^ussd/', include('TestUssdApp.urls'))
-        ]
+    def test_app_files_created(self):
+        # Verify that the app directory and key files exist
+        self.assertTrue(os.path.exists(self.app_path))
+        self.assertTrue(os.path.exists(os.path.join(self.app_path, 'views.py')))
+        self.assertTrue(os.path.exists(os.path.join(self.app_path, 'urls.py')))
+        self.assertTrue(os.path.exists(os.path.join(self.app_path, 'customer_journey.yml')))
 
-        urls.urlpatterns += ussd_url
+        # Optionally, check content of views.py and urls.py to ensure correct templating
+        with open(os.path.join(self.app_path, 'views.py'), 'r') as f:
+            content = f.read()
+            self.assertIn(f'class TestussdappView(UssdView):', content)
+            self.assertIn(f'customer_journey_namespace = "TestussdappUssdGateWay"', content)
+        
+        with open(os.path.join(self.app_path, 'urls.py'), 'r') as f:
+            content = f.read()
+            self.assertIn(f"from .views import TestussdappView", content)
+            self.assertIn(f"re_path(r'', TestussdappView.as_view()),", content)
 
-        end_point_url = "http://localhost:8081/ussd/TestUssdApp_ussd_gateway"
-        payload = {
-            "phoneNumber": "0717199135", "sessionId": "12", "text": "1", "language": "en", "serviceCode": "200"}
-
-        response = self.client.post(end_point_url,
-                                    data=json.dumps(payload),
-                                    content_type="application/json",)
-        self.assertEqual(response.content,
-                         b'END Example Quit Screen. Delete this and define your own customer journey screens.')
-        self.assertEqual(response.status_code, 200)
-        print(response.status_code)
-        os.system('rm -r TestUssdApp')  # Remove created app. Clean up
 

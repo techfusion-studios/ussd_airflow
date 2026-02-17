@@ -1,13 +1,13 @@
-# This are the requirements required by 3rd party application
-# And will be installed when the application is installed
-django==1.10.4
-djangorestframework==3.5.3
+# These are the base requirements for the application.
+# They will be installed when the application is installed.
+django==5.2.9
+djangorestframework
 structlog>=16.1.0
 jinja2>=2.8
-PyYaml==3.12
+PyYaml==6.0.1
 PyStaticConfiguration>=0.10.2
 requests>=2.12.3
-celery>=4.0.0rc3
-PyConfigure>=0.5.9
-django-annoying==0.10.3
-attrs==18.2.0
+celery
+
+django-annoying
+attrs

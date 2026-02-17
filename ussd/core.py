@@ -17,7 +17,7 @@ from rest_framework.serializers import SerializerMetaclass
 import re
 import json
 import os
-from configure import Configuration
+import yaml
 from datetime import datetime
 from ussd.models import SessionLookup
 from annoying.functions import get_object_or_None
@@ -38,7 +38,6 @@ _built_in_functions = {}
 
 # initialize jinja2 environment
 env = Environment(keep_trailing_newline=True)
-env.filters.update(_registered_filters)
 
 
 class MissingAttribute(Exception):
@@ -74,6 +73,8 @@ def get_session_engine():
 
 def ussd_session(session_id):
     session = get_session_engine().SessionStore(session_key=session_id)
+    session._session_key = session_id
+    # Force load of session data
     session._session.keys()
     session._session_key = session_id
 
@@ -97,10 +98,8 @@ def generate_session_id():
 
 def load_yaml(file_path, namespace):
     file_path = Template(file_path).render(os.environ)
-    yaml_dict = Configuration.from_file(
-            os.path.abspath(file_path),
-            configure=False
-        )
+    with open(os.path.abspath(file_path), 'r') as f:
+        yaml_dict = yaml.safe_load(f)
     staticconf.DictConfiguration(
         yaml_dict,
         namespace=namespace,
@@ -370,44 +369,76 @@ class UssdHandlerAbstract(object, metaclass=UssdHandlerMetaClass):
 
     def route_options(self, route_options=None):
         """
-        iterates all the options executing expression comand.
+        iterates all the options executing expression command.
+        Returns a tuple of (ussd_request, handler_name_string).
         """
-        if route_options is None:
-            route_options = self.screen_content["next_screen"]
+        # Determine the set of options to route based on
+        current_route_options = route_options if route_options is not None \
+            else self.screen_content.get("next_screen")
 
-        if isinstance(route_options, str):
-            return self.ussd_request.forward(route_options)
+        # Case 1: If current_route_options is a single string, directly forward it.
+        if isinstance(current_route_options, str):
+            return self.ussd_request.forward(current_route_options)
 
-        loop_items = [0]
-        if self.screen_content.get("with_items"):
-            loop_items = self.evaluate_jija_expression(
-                self.screen_content["with_items"],
-                session=self.ussd_request.session
-            ) or loop_items
+        # Case 2: If current_route_options is a list of dictionaries (conditional routing)
+        if isinstance(current_route_options, list):
+            # These loops are for `with_items` or `with_dict` in menu_screen
+            # For general route_options, loop_items will usually be [0]
+            loop_items = [0]
+            if self.screen_content.get("with_items"):
+                loop_items = self.evaluate_jija_expression(
+                    self.screen_content["with_items"],
+                    session=self.ussd_request.session
+                ) or loop_items
 
-        for item in loop_items:
-            extra_context = {
-                "item": item
-            }
-            if isinstance(loop_items, dict):
-                extra_context.update(
-                    dict(
-                        key=item,
-                        value=loop_items[item],
-                        item={item: loop_items[item]}
+            for item in loop_items:
+                extra_context = {
+                    "item": item
+                }
+                if isinstance(loop_items, dict):
+                    extra_context.update(
+                        dict(
+                            key=item,
+                            value=loop_items[item],
+                            item={item: loop_items[item]}
+                        )
                     )
-                )
 
-            for option in route_options:
-                if self.evaluate_jija_expression(
-                        option.get('expression') or option['condition'],
-                        session=self.ussd_request.session,
-                        extra_context=extra_context
-                ):
-                    return self.ussd_request.forward(option['next_screen'])
-        return self.ussd_request.forward(
-            self.screen_content['default_next_screen']
-        )
+                for option in current_route_options:
+                    if isinstance(option, dict) and 'next_screen' in option:
+                        if self.evaluate_jija_expression(
+                                option.get('expression') or option['condition'],
+                                session=self.ussd_request.session,
+                                extra_context=extra_context
+                        ):
+                            # Ensure option['next_screen'] is a string before forwarding
+                            if isinstance(option['next_screen'], str):
+                                return self.ussd_request.forward(option['next_screen'])
+                            else:
+                                self.logger.error(f"Conditional next_screen is not a string: {option['next_screen']}")
+                                # Fallback or error handling for malformed config
+                                # For now, let it fall through to default.
+                                pass
+
+        # If no explicit route was determined, look for a default_next_screen
+        default_next_screen_conf = self.screen_content.get('default_next_screen')
+        if default_next_screen_conf:
+            if isinstance(default_next_screen_conf, str):
+                return self.ussd_request.forward(default_next_screen_conf)
+            elif isinstance(default_next_screen_conf, list):
+                # Recursively call route_options to resolve the default next screen
+                recursive_result = self.route_options(default_next_screen_conf)
+                if recursive_result and isinstance(recursive_result, tuple) and \
+                   len(recursive_result) == 2 and isinstance(recursive_result[1], str):
+                    return recursive_result
+                else:
+                    self.logger.warning("Default next screen (list) could not be resolved to a valid screen name.")
+            else:
+                self.logger.error(f"Invalid type for default_next_screen: {type(default_next_screen_conf)}")
+
+        # If no route is found, including default, return an empty string to indicate no transition
+        return self.ussd_request.forward("") # This will forward to an empty screen name, which staticconf will fail to read, eventually leading to a controlled error.
+
     @staticmethod
     def get_session_items(session) -> dict:
         return dict(iter(session.items()))
@@ -446,7 +477,7 @@ class UssdHandlerAbstract(object, metaclass=UssdHandlerMetaClass):
 
         template = env.from_string(text or '')
         text = template.render(context)
-        return json.dumps(text) if encode is 'json' else text
+        return json.dumps(text) if encode == 'json' else text
 
     def get_text(self, text_context=None):
         text_context = self.screen_content.get('text')\
@@ -480,16 +511,35 @@ class UssdHandlerAbstract(object, metaclass=UssdHandlerMetaClass):
         context = cls.get_context(
             session, extra_context=extra_context)
 
-        try:
-            expr = env.compile_expression(
-                expression.replace("{{", "").replace("}}", "")
-            )
-            return expr(context)
-        except Exception:
+        # Check if the expression is a simple variable lookup (e.g., "{{ variable_name }}")
+        # without any filters or complex logic, to return the raw object.
+        simple_var_regex = re.compile(r'^{{\s*(\S*)\s*}}$')
+        match = simple_var_regex.match(expression)
+        if match:
+            variable_name = match.group(1)
+            variable_name = match.group(1)
+            # Check if the variable exists in the context and return its raw value
+            if variable_name in context:
+                return context[variable_name]
+            # If not found, fall through to full template rendering, it might be a more complex expression
+        
+        # Original logic for rendering as a template string or compiling expression
+        if isinstance(expression, str) and ('{{' in expression or '{%' in expression or '{#' in expression):
             try:
-                return env.from_string(expression or '').render(context)
+                return env.from_string(expression).render(context)
             except Exception:
+                # Fallback to default if rendering fails
                 return default
+        elif isinstance(expression, str):
+            try:
+                expr = env.compile_expression(expression)
+                return expr(context)
+            except Exception:
+                try:
+                    return env.from_string(expression or '').render(context)
+                except Exception:
+                    return default
+        return default
 
     @classmethod
     def validate(cls, screen_name: str, ussd_content: dict) -> (bool, dict):
@@ -594,6 +644,7 @@ class UssdHandlerAbstract(object, metaclass=UssdHandlerMetaClass):
             session_id=session.session_key
         )
         logger.info("sending_request", **http_request_conf)
+        print(f"DEBUG: make_request - http_request_conf: {http_request_conf}") # Debug print
         response = requests.request(**http_request_conf)
         logger.info("response", status_code=response.status_code,
                          content=response.content)
@@ -653,6 +704,23 @@ class UssdHandlerAbstract(object, metaclass=UssdHandlerMetaClass):
 
 
 NextScreens = namedtuple("NextScreens", "next_screens links")
+
+
+def _resolve_inheritance(screen_name: str, ussd_content: dict) -> dict:
+    screen_config = deepcopy(ussd_content[screen_name])
+    if 'inherit' in screen_config:
+        inherited_screen_name = screen_config['inherit']
+        if inherited_screen_name not in ussd_content:
+            raise InvalidAttribute(f"Inherited screen '{inherited_screen_name}' not found for screen '{screen_name}'")
+        
+        # Recursively resolve inheritance for the parent screen
+        inherited_config = _resolve_inheritance(inherited_screen_name, ussd_content)
+        
+        # Merge inherited config with current screen config, current config overrides inherited
+        # Exclude 'inherit' key from merging from parent to avoid infinite recursion
+        merged_config = {**{k: v for k, v in inherited_config.items() if k != 'inherit'}, **screen_config}
+        return merged_config
+    return screen_config
 
 class UssdView(APIView, metaclass=UssdViewMetaClass):
     """
@@ -795,8 +863,11 @@ class UssdView(APIView, metaclass=UssdViewMetaClass):
             try:
                 ussd_response = self.ussd_dispatcher(response)
             except Exception as e:
+                self.logger.exception("Exception caught in finalize_response")
                 if settings.DEBUG:
                     ussd_response = UssdResponse(str(e))
+                else:
+                    ussd_response = UssdResponse("An internal error occurred.")
             return self.ussd_response_handler(ussd_response)
         return super(UssdView, self).finalize_response(
             request, response, args, kwargs)
@@ -806,17 +877,19 @@ class UssdView(APIView, metaclass=UssdViewMetaClass):
 
     def ussd_dispatcher(self, ussd_request):
 
-        # Clear input and initialize session if we are starting up
-        if '_ussd_state' not in ussd_request.session:
-            ussd_request.input = ''
-            ussd_request.session['_ussd_state'] = {'next_screen': ''}
-            ussd_request.session['ussd_interaction'] = []
-            ussd_request.session['posted'] = False
-            ussd_request.session['submit_data'] = {}
-            ussd_request.session['session_id'] = ussd_request.session_id
-            ussd_request.session['phone_number'] = ussd_request.phone_number
+        # Initialize/reset session variables for consistency
 
-        # update ussd_request variable to session and template variables
+        # Only initialize _ussd_state if it doesn't exist (i.e., new session or first request)
+        if '_ussd_state' not in ussd_request.session:
+            ussd_request.session['_ussd_state'] = {'next_screen': ''}
+        # Only initialize ussd_interaction if it doesn't exist
+        if 'ussd_interaction' not in ussd_request.session:
+            ussd_request.session['ussd_interaction'] = []
+        ussd_request.session['posted'] = False
+        ussd_request.session['submit_data'] = {}
+        ussd_request.session['session_id'] = ussd_request.session_id
+        ussd_request.session['phone_number'] = ussd_request.phone_number        
+                # update ussd_request variable to session and template variables
         # to be used later for jinja2 evaluation
         ussd_request.session.update(ussd_request.all_variables())
 
@@ -829,8 +902,11 @@ class UssdView(APIView, metaclass=UssdViewMetaClass):
 
         self.logger.debug('gateway_request', text=ussd_request.input)
 
+
         # Invoke handlers
         ussd_response = self.run_handlers(ussd_request)
+
+
         ussd_request.session[ussd_airflow_variables.last_update] = \
             utilities.datetime_to_string(datetime.now())
         # Save session
@@ -849,7 +925,8 @@ class UssdView(APIView, metaclass=UssdViewMetaClass):
 
         ussd_response = (ussd_request, handler)
 
-        if handler != "initial_screen":
+        # Update end_time for previous interaction if it exists and handler is not initial_screen
+        if ussd_request.session["ussd_interaction"] and handler != "initial_screen":
             # get start time
             start_time = utilities.string_to_datetime(
                 ussd_request.session["ussd_interaction"][-1]["start_time"])
@@ -873,15 +950,18 @@ class UssdView(APIView, metaclass=UssdViewMetaClass):
                 handler,
                 namespace=self.customer_journey_namespace)
 
+            # Resolve inheritance for the current screen
+            resolved_screen_content = _resolve_inheritance(handler, staticconf.config.get_namespace(self.customer_journey_namespace).get_config_values())
+
             screen_type = 'initial_screen' \
                 if handler == "initial_screen" and \
                    isinstance(screen_content, str) \
-                else screen_content['type']
+                else resolved_screen_content['type']
 
             ussd_response = _registered_ussd_handlers[screen_type](
                 ussd_request,
                 handler,
-                screen_content,
+                resolved_screen_content,
                 initial_screen=self.initial_screen,
                 logger=self.logger
             ).handle()
@@ -915,6 +995,9 @@ class UssdView(APIView, metaclass=UssdViewMetaClass):
                 }}
             )
         for screen_name, screen_content in ussd_content.items():
+            # Resolve inheritance for the current screen
+            resolved_screen_content = _resolve_inheritance(screen_name, ussd_content)
+
             # all screens should have type attribute
             if screen_name == "initial_screen" and \
                     isinstance(screen_content, str):
@@ -927,10 +1010,10 @@ class UssdView(APIView, metaclass=UssdViewMetaClass):
                     )
                 continue
 
-            screen_type = screen_content.get('type')
+            screen_type = resolved_screen_content.get('type')
 
             # all screen should have type field.
-            serialize = UssdBaseSerializer(data=screen_content,
+            serialize = UssdBaseSerializer(data=resolved_screen_content,
                                            context=ussd_content)
             base_validation = serialize.is_valid()
 

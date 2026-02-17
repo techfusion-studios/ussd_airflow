@@ -69,6 +69,50 @@ class DynamoDb(JourneyStore):
     def __init__(self, table_name, endpoint=None):
         self.table_name = table_name
         self.table = dynamodb_table(table_name, endpoint=endpoint)
+        self.raw_dynamodb_client = dynamodb_connection_factory(low_level=True, endpoint=endpoint)
+
+    def create_table(self):
+        try:
+            self.raw_dynamodb_client.create_table(
+                TableName=self.table_name,
+                KeySchema=[
+                    {
+                        'AttributeName': self.journeyName,
+                        'KeyType': 'HASH'  # Partition key
+                    },
+                    {
+                        'AttributeName': self.version,
+                        'KeyType': 'RANGE'  # Sort key
+                    }
+                ],
+                AttributeDefinitions=[
+                    {
+                        'AttributeName': self.journeyName,
+                        'AttributeType': 'S'
+                    },
+                    {
+                        'AttributeName': self.version,
+                        'AttributeType': 'S'
+                    },
+                ],
+                ProvisionedThroughput={
+                    'ReadCapacityUnits': 1,
+                    'WriteCapacityUnits': 1
+                }
+            )
+            # Wait until the table exists.
+            self.table.wait_until_exists()
+        except self.raw_dynamodb_client.exceptions.ResourceInUseException:
+            # Table already exists, which is fine for local testing
+            pass
+
+    def delete_table(self):
+        try:
+            self.raw_dynamodb_client.delete_table(TableName=self.table_name)
+            self.table.wait_until_not_exists()
+        except self.raw_dynamodb_client.exceptions.ResourceNotFoundException:
+            # Table does not exist, which is fine for local testing
+            pass
 
     def _get(self, name, version, screen_name, **kwargs):
         screen_kwarg = {}
@@ -148,6 +192,10 @@ class DynamoDb(JourneyStore):
                 )
 
     def flush(self):
-        all_records = self.table.scan()
-        for i in all_records['Items']:
-            self._delete(i[self.journeyName], i[self.version])
+        try:
+            all_records = self.table.scan()
+            for i in all_records['Items']:
+                self._delete(i[self.journeyName], i[self.version])
+        except self.raw_dynamodb_client.exceptions.ResourceNotFoundException:
+            # Table does not exist, nothing to flush
+            pass

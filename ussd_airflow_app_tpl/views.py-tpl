@@ -3,10 +3,9 @@ from django.shortcuts import render
 # Create your views here.
 from ussd.core import UssdView, UssdRequest
 from django.http import HttpResponse
-from {{ app_name }} import path
 
 
-class {{ camel_case_app_name }}UssdGateWay(UssdView):
+class {{ camel_case_app_name }}View(UssdView):
     customer_journey_namespace = "{{ camel_case_app_name }}UssdGateWay"
     customer_journey_conf = path + "/customer_journey.yml"
 

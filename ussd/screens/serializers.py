@@ -56,14 +56,14 @@ class UssdContentBaseSerializer(UssdBaseSerializer, UssdTextSerializer):
 
 class UssdNextScreenField(serializers.ListField):
     """
-    Overriding next screen so that it can be defined as a string or a list filed for 
+    Overriding next screen so that it can be defined as a string or a list filed for
     backward compatibility
-    
+
     Two ways of defining next screen:
-        1. 
+        1.
         next_screen: screen_one
-        
-        2. 
+
+        2.
         next_screen:
             - condition: true
               screen: screen_two
@@ -74,8 +74,10 @@ class UssdNextScreenField(serializers.ListField):
             data = [
                 {"condition": 'true', "next_screen": data}
             ]
+            # Manually validate the converted data if it was originally a string
+            validated_child_data = self.child.run_validation(data[0])
+            return [validated_child_data]
         return super(UssdNextScreenField, self).to_internal_value(data)
-
 
 
 class NextUssdScreenChildSerializer(serializers.Serializer):
@@ -92,15 +94,6 @@ class NextUssdScreenChildSerializer(serializers.Serializer):
 
 class NextUssdScreenSerializer(serializers.Serializer):
     next_screen = UssdNextScreenField(child=NextUssdScreenChildSerializer())
-
-    def to_internal_value(self, data):
-        try:
-            return super(NextUssdScreenSerializer, self).to_internal_value(data)
-        except ValidationError as err:
-            if isinstance(data.get('next_screen'), str):
-                if err.detail.get('next_screen'):
-                    err.detail['next_screen'] = err.detail['next_screen']['next_screen']
-            raise err
 
 
 class MenuOptionSerializer(UssdTextSerializer, NextUssdScreenSerializer):

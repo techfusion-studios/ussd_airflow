@@ -2,11 +2,10 @@
 add this your ussd urls here.
 Don't forget to include them in your projects root urls.py file.
 """
-from django.conf.urls import url
-from {{ app_name }}.views import {{ camel_case_app_name }}UssdGateWay
+from django.urls import re_path
+
+from .views import {{ camel_case_app_name }}View
 
 urlpatterns = [
-    url(r'^{{ app_name }}_ussd_gateway',
-        {{ camel_case_app_name }}UssdGateWay.as_view(),
-        name='{{ app_name }}_ussd_gateway')
+    re_path(r'', {{ camel_case_app_name }}View.as_view()),
 ]

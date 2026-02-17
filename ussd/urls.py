@@ -1,7 +1,7 @@
-from django.conf.urls import url
+from django.urls import re_path
 from ussd.views import MermaidText, ValidateJourney
 
 urlpatterns = [
-    url(r'mermaid_text$', MermaidText.as_view(), name="mermaid_text"),
-    url(r'validate_journey$', ValidateJourney.as_view())
+    re_path(r'mermaid_text$', MermaidText.as_view(), name="mermaid_text"),
+    re_path(r'validate_journey$', ValidateJourney.as_view())
 ]

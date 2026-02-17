@@ -177,3 +177,11 @@ class TestDynamodb(TestDriverStore.BaseDriverStoreTestCase):
     @staticmethod
     def setup_driver() -> DynamoDb:
         return DynamoDb(settings.DYNAMODB_TABLE, "http://dynamodb:8000")
+
+    def setUp(self):
+        super().setUp()
+        self.driver.create_table()
+
+    def tearDown(self):
+        self.driver.delete_table()
+        super().tearDown()
