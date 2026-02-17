@@ -1,13 +1,19 @@
 from ussd.core import UssdView, UssdRequest,_customer_journey_files, \
     render_journey_as_mermaid_text, convert_error_response_to_mermaid_error
-from ussd.tests.sample_screen_definition import path
 from django.http import HttpResponse, JsonResponse
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 from django.shortcuts import render
 import json
 from ussd.utilities import YamlToGo
 from rest_framework.views import APIView
+
+try:
+    from ussd.tests.sample_screen_definition import path as sample_screen_definition_path
+except ModuleNotFoundError:
+    # Test fixtures are sometimes excluded from packaged installs.
+    sample_screen_definition_path = None
 
 
 class AfricasTalkingUssdGateway(UssdView):
@@ -34,9 +40,20 @@ class AfricasTalkingUssdGateway(UssdView):
 
     def get_customer_journey_conf(self, request):
         if request.data.get('customer_journey_conf'):
-            return path + '/' + request.data.get('customer_journey_conf')
-        return getattr(settings, 'DEFAULT_USSD_SCREEN_JOURNEY',
-                       path + "/sample_customer_journey.yml")
+            if sample_screen_definition_path:
+                return sample_screen_definition_path + '/' + request.data.get('customer_journey_conf')
+            return request.data.get('customer_journey_conf')
+
+        configured_default = getattr(settings, 'DEFAULT_USSD_SCREEN_JOURNEY', None)
+        if configured_default:
+            return configured_default
+
+        if sample_screen_definition_path:
+            return sample_screen_definition_path + "/sample_customer_journey.yml"
+
+        raise ImproperlyConfigured(
+            "Set DEFAULT_USSD_SCREEN_JOURNEY or install sample screen definitions."
+        )
 
     def get_customer_journey_namespace(self, request):
         if request.data.get('customer_journey_conf'):
